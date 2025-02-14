@@ -158,8 +158,8 @@ LIBHTS_SOVERSION = 3
 # is not strictly necessary and should be removed the next time
 # LIBHTS_SOVERSION is bumped (see #1144 and
 # https://developer.apple.com/library/archive/documentation/DeveloperTools/Conceptual/DynamicLibraries/100-Articles/DynamicLibraryDesignGuidelines.html#//apple_ref/doc/uid/TP40002013-SW23)
-MACH_O_COMPATIBILITY_VERSION = 3.1.20
-MACH_O_CURRENT_VERSION = 3.1.20
+MACH_O_COMPATIBILITY_VERSION = 3.1.21
+MACH_O_CURRENT_VERSION = 3.1.21
 
 # Force version.h to be remade if $(PACKAGE_VERSION) has changed.
 version.h: $(if $(wildcard version.h),$(if $(findstring "$(PACKAGE_VERSION)",$(shell cat version.h)),,force))
@@ -309,8 +309,16 @@ config.h:
 	echo '#define HAVE_ATTRIBUTE_CONSTRUCTOR 1' >> $@
 	echo '#endif' >> $@
 	echo '#if (defined(__x86_64__) || defined(_M_X64))' >> $@
-	echo '#define HAVE_ATTRIBUTE_TARGET 1' >> $@
+	echo '#define HAVE_ATTRIBUTE_TARGET_SSSE3 1' >> $@
 	echo '#define HAVE_BUILTIN_CPU_SUPPORT_SSSE3 1' >> $@
+	echo '#endif' >> $@
+	echo '#if defined __linux__' >> $@
+	echo '#define HAVE_GETAUXVAL' >> $@
+	echo '#elif defined __FreeBSD__' >> $@
+	echo '#define HAVE_ELF_AUX_INFO' >> $@
+	echo '#elif defined __OpenBSD__' >> $@
+	echo '// Enable extra OpenBSD checks (see simd.c)' >> $@
+	echo '#define HAVE_OPENBSD' >> $@
 	echo '#endif' >> $@
 
 # And similarly for htslib.pc.tmp ("pkg-config template").  No dependency
@@ -573,7 +581,7 @@ htscodecs/htscodecs/version.h: force
 	  vers=`cd $(srcdir)/htscodecs && git describe --always --dirty --match 'v[0-9]\.[0-9]*'` && \
 	  case "$$vers" in \
 	    v*) vers=$${vers#v} ;; \
-	    *) iv=`awk '/^AC_INIT/ { match($$0, /^AC_INIT\(htscodecs, *([0-9](\.[0-9])*)\)/, m); print substr($$0, m[1, "start"], m[1, "length"]) }' $(srcdir)/htscodecs/configure.ac` ; vers="$$iv$${vers:+-g$$vers}" ;; \
+	    *) iv=`awk '/^AC_INIT\(htscodecs,/ { match($$0, /[0-9]+(\.[0-9]+)*/); print substr($$0, RSTART, RLENGTH) }' $(srcdir)/htscodecs/configure.ac` ; vers="$$iv$${vers:+-g$$vers}" ;; \
 	  esac ; \
 	  if ! grep -s -q '"'"$$vers"'"' $@ ; then \
 	    echo 'Updating $@ : #define HTSCODECS_VERSION_TEXT "'"$$vers"'"' ; \

@@ -1698,8 +1698,7 @@ int cram_uncompress_block(cram_block *b) {
             free(uncomp);
             return -1;
         }
-        b->orig_method = RANS_PR0 + (b->data[0]&1)
-            + 2*((b->data[0]&0x40)>0) + 4*((b->data[0]&0x80)>0);
+        b->orig_method = RANSPR;
         free(b->data);
         b->data = (unsigned char *)uncomp;
         b->alloc = usize2;
@@ -1718,8 +1717,7 @@ int cram_uncompress_block(cram_block *b) {
             free(uncomp);
             return -1;
         }
-        b->orig_method = ARITH_PR0 + (b->data[0]&1)
-            + 2*((b->data[0]&0x40)>0) + 4*((b->data[0]&0x80)>0);
+        b->orig_method = ARITH;
         free(b->data);
         b->data = (unsigned char *)uncomp;
         b->alloc = usize2;
@@ -2787,9 +2785,15 @@ static int refs_from_header(cram_fd *fd) {
 
         /* Initialise likely filename if known */
         if ((ty = sam_hrecs_find_type_id(h->hrecs, "SQ", "SN", h->hrecs->ref[i].name))) {
-            if ((tag = sam_hrecs_find_key(ty, "M5", NULL))) {
+            if ((tag = sam_hrecs_find_key(ty, "M5", NULL)))
                 r->ref_id[j]->fn = string_dup(r->pool, tag->str+3);
-                //fprintf(stderr, "Tagging @SQ %s / %s\n", r->ref_id[h]->name, r->ref_id[h]->fn);
+
+            if ((tag = sam_hrecs_find_key(ty, "LN", NULL))) {
+                // LN tag used when constructing consensus reference
+                r->ref_id[j]->LN_length = strtoll(tag->str+3, NULL, 0);
+                // See fuzz 382922241
+                if (r->ref_id[j]->LN_length < 0)
+                    r->ref_id[j]->LN_length = 0;
             }
         }
 
@@ -4952,6 +4956,8 @@ int cram_write_SAM_hdr(cram_fd *fd, sam_hdr_t *hdr) {
                         hts_log_warning("NOTE: the CRAM file will be bigger "
                                         "than using an external reference");
                         pthread_mutex_lock(&fd->ref_lock);
+                        // Best guess.  It may be unmapped data with broken
+                        // headers, in which case this will get ignored.
                         fd->embed_ref = 2;
                         pthread_mutex_unlock(&fd->ref_lock);
                         break;
@@ -5434,28 +5440,11 @@ cram_fd *cram_dopen(hFILE *fp, const char *filename, const char *mode) {
  *        -1 on failure
  */
 int cram_seek(cram_fd *fd, off_t offset, int whence) {
-    char buf[65536];
-
     fd->ooc = 0;
 
     cram_drain_rqueue(fd);
 
-    if (hseek(fd->fp, offset, whence) >= 0) {
-        return 0;
-    }
-
-    if (!(whence == SEEK_CUR && offset >= 0))
-        return -1;
-
-    /* Couldn't fseek, but we're in SEEK_CUR mode so read instead */
-    while (offset > 0) {
-        int len = MIN(65536, offset);
-        if (len != hread(fd->fp, buf, len))
-            return -1;
-        offset -= len;
-    }
-
-    return 0;
+    return hseek(fd->fp, offset, whence) >= 0 ? 0 : -1;
 }
 
 /*
@@ -5814,6 +5803,8 @@ int cram_set_voption(cram_fd *fd, enum hts_fmt_option opt, va_list args) {
     case CRAM_OPT_RANGE: {
         int r = cram_seek_to_refpos(fd, va_arg(args, cram_range *));
         pthread_mutex_lock(&fd->range_lock);
+//        printf("opt range noseek to %p %d:%ld-%ld\n",
+//               fd, fd->range.refid, fd->range.start, fd->range.end);
         if (fd->range.refid != -2)
             fd->required_fields |= SAM_POS;
         pthread_mutex_unlock(&fd->range_lock);

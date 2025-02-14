@@ -4238,6 +4238,8 @@ int vcf_write(htsFile *fp, const bcf_hdr_t *h, bcf1_t *v)
     if ( fp->format.compression!=no_compression ) {
         if (bgzf_flush_try(fp->fp.bgzf, fp->line.l) < 0)
             return -1;
+        if (fp->idx && !fp->fp.bgzf->mt)
+            hts_idx_amend_last(fp->idx, bgzf_tell(fp->fp.bgzf));
         ret = bgzf_write(fp->fp.bgzf, fp->line.s, fp->line.l);
     } else {
         ret = hwrite(fp->fp.hfile, fp->line.s, fp->line.l);
@@ -5023,8 +5025,8 @@ static void bcf_set_variant_type(const char *ref, const char *alt, bcf_variant_t
 
     if ( *a && !*r )
     {
-        if ( *a==']' || *a=='[' ) { var->type = VCF_BND; return; } // "joined after" breakend
         while ( *a ) a++;
+        if ( *(a-1)==']' || *(a-1)=='[' ) { var->type = VCF_BND; return; } // "joined after" breakend
         var->n = (a-alt)-(r-ref); var->type = VCF_INDEL | VCF_INS; return;
     }
     else if ( *r && !*a )
@@ -5159,6 +5161,7 @@ int bcf_has_variant_types(bcf1_t *rec, uint32_t bitmask,
         else return bitmask & type;
     }
     // mode == bcf_match_exact
+    if ( bitmask==VCF_REF ) return type==bitmask ? 1 : 0;
     return type==bitmask ? type : 0;
 }
 
@@ -5492,6 +5495,7 @@ int bcf_has_filter(const bcf_hdr_t *hdr, bcf1_t *line, char *filter)
 static inline int _bcf1_sync_alleles(const bcf_hdr_t *hdr, bcf1_t *line, int nals)
 {
     line->d.shared_dirty |= BCF1_DIRTY_ALS;
+    line->d.var_type = -1;
 
     line->n_allele = nals;
     hts_expand(char*, line->n_allele, line->d.m_allele, line->d.allele);
